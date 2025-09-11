@@ -9,8 +9,10 @@
     "dev": "nodemon app.js"
   },
   "dependencies": {
+    "@azure/storage-blob": "^12.28.0",
     "dotenv": "^17.2.2",
     "express": "^5.1.0",
+    "mongodb": "^4.17.2",
     "multer": "^2.0.2"
   },
   "devDependencies": {
