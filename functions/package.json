@@ -1,0 +1,10 @@
+{
+  "name": "blob-enqueue",
+  "version": "1.0.0",
+  "main": "index.js",
+  "license": "MIT",
+  "dependencies": {
+    "@azure/service-bus": "file:azure-service-bus-7.9.5.tgz",
+    "mongodb": "^4.17.2"
+  }
+}
