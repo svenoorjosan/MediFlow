@@ -35,6 +35,8 @@ app.post('/api/upload', upload.single('file'), async (req, res) => {
       blobHTTPHeaders: { blobContentType: req.file.mimetype }
     });
 
+    await blockBlob.setMetadata({ jobId: blobName });
+
     // job metadata
     await (await jobs()).insertOne({
       id: blobName,          // shard key

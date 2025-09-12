@@ -1,0 +1,14 @@
+{
+  "IsEncrypted": false,
+  "Values": {
+    "FUNCTIONS_WORKER_RUNTIME": "node",
+    "AzureWebJobsSecretStorageType": "Files",
+    "AzureWebJobsStorage": "DefaultEndpointsProtocol=...;AccountName=...;AccountKey=...;EndpointSuffix=core.windows.net",
+    "BLOB_BASE_URL": "https://<storage>.blob.core.windows.net",
+    "SERVICEBUS_CONNECTION": "Endpoint=sb://...;SharedAccessKeyName=...;SharedAccessKey=...",
+    "SERVICEBUS_QUEUE": "process",
+    "COSMOS_URI": "mongodb://user:password@host.mongo.cosmos.azure.com:10255/?ssl=true&retrywrites=false",
+    "COSMOS_DB": "mediaflow",
+    "COSMOS_COLL": "jobs"
+  }
+}

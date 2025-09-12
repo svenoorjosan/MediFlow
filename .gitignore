@@ -1,0 +1,21 @@
+# Node
+node_modules/
+**/node_modules/
+npm-debug.log*
+*.tgz
+
+# Python
+**/.venv/
+
+# Env & local settings (secrets)
+*.env
+**/*.env
+functions/local.settings.json
+**/local.env
+
+# OS / editor
+.DS_Store
+Thumbs.db
+
+# Local assets
+Pictures/
