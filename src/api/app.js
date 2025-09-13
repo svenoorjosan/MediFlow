@@ -1,6 +1,8 @@
 import express from 'express';
 import multer from 'multer';
 import dotenv from 'dotenv';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import { BlobServiceClient } from '@azure/storage-blob';
 import { jobs } from './db.js';
 
@@ -10,6 +12,21 @@ console.log('COSMOS_URI loaded:', process.env.COSMOS_URI?.slice(0, 40));
 const app = express();
 const port = process.env.PORT || 3001;
 
+// __dirname for ESM
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+/* ── Serve the minimal UI from /public ──────────────────────── */
+app.use(
+  express.static(path.join(__dirname, 'public'), {
+    maxAge: '1h',
+    etag: true,
+  })
+);
+app.get('/', (_req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+
 /* ── Multer: keep uploads in memory ─────────────────────────── */
 const upload = multer({ storage: multer.memoryStorage() });
 
@@ -18,7 +35,7 @@ const blobService = BlobServiceClient.fromConnectionString(
   process.env.AZURE_STORAGE_CONNECTION_STRING
 );
 const containerClient = blobService.getContainerClient(
-  process.env.AZURE_STORAGE_CONTAINER   // “uploads”
+  process.env.AZURE_STORAGE_CONTAINER // “uploads”
 );
 
 /* ── Routes ─────────────────────────────────────────────────── */
@@ -32,25 +49,32 @@ app.post('/api/upload', upload.single('file'), async (req, res) => {
     const blockBlob = containerClient.getBlockBlobClient(blobName);
 
     await blockBlob.uploadData(req.file.buffer, {
-      blobHTTPHeaders: { blobContentType: req.file.mimetype }
+      blobHTTPHeaders: { blobContentType: req.file.mimetype },
     });
 
-    await blockBlob.setMetadata({ jobId: blobName });
+    // Optional metadata to help downstream function locate job id
+    try {
+      await blockBlob.setMetadata({ jobId: blobName });
+    } catch (e) {
+      // metadata is optional; continue
+      console.warn('setMetadata warning:', e?.message || e);
+    }
 
     // job metadata
-    await (await jobs()).insertOne({
-      id: blobName,          // shard key
-      _id: blobName,          // shard key
+    const coll = await jobs();
+    await coll.insertOne({
+      id: blobName, // shard key
+      _id: blobName, // shard key
       url: blockBlob.url,
       original: req.file.originalname,
       status: 'queued',
-      createdAt: new Date()
+      createdAt: new Date(),
     });
 
     res.json({
       id: blobName,
       url: blockBlob.url,
-      original: req.file.originalname
+      original: req.file.originalname,
     });
   } catch (err) {
     console.error(err);
