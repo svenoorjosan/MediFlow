@@ -25,23 +25,48 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Deploy API
-        uses: azure/webapps-deploy@v2
-        with:
-          app-name: ${{ env.API_APP }}
-          publish-profile: ${{ secrets.WEBAPP_PUBLISH_PROFILE }}
-          package: src/api
+
+      # Read the publish profile from the secret and extract app + Kudu host
+      - name: Validate API publish profile
+        id: api_pp
+        run: |
+          cat > api_profile.xml <<'EOF'
+          ${{ secrets.WEBAPP_PUBLISH_PROFILE }}
+          EOF
+          APP=$(sed -n 's/.*msdeploySite="\([^"]*\)".*/\1/p' api_profile.xml | head -n1)
+          PUB=$(sed -n 's/.*publishUrl="\([^"]*\)".*/\1/p' api_profile.xml | head -n1)
+          echo "APP_NAME=$APP" >> $GITHUB_ENV
+          echo "KUDU_URL=${PUB%:443}" >> $GITHUB_ENV
+          echo "Using app: $APP"
+          echo "Using Kudu: ${PUB%:443}"
+
+      - name: Zip API
+        run: |
+          cd src/api
+          zip -r ../api.zip .
+          cd ../..
+
+      - name: Deploy API via Kudu ZipDeploy
+        run: |
+          USER=$(sed -n 's/.*userName="\([^"]*\)".*/\1/p' api_profile.xml | head -n1)
+          PASS=$(sed -n 's/.*userPWD="\([^"]*\)".*/\1/p' api_profile.xml | head -n1)
+          curl -sSf -u "$USER:$PASS" \
+            -X POST "https://${{ env.KUDU_URL }}/api/zipdeploy" \
+            --data-binary @src/api.zip
+          echo "Deployed to https://${{ env.APP_NAME }}.azurewebsites.net" >> $GITHUB_STEP_SUMMARY
 
   deploy-functions:
     name: Function App (blob → Service Bus)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
       - name: Zip functions
         run: |
           cd functions
           zip -r ../functions.zip .
           cd ..
+
       - name: Deploy Functions
         uses: Azure/functions-action@v1
         with:
@@ -54,12 +79,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
       - name: Login to ACR
         uses: docker/login-action@v3
         with:
           registry: ${{ env.ACR_LOGIN_SERVER }}
           username: ${{ secrets.ACR_USERNAME }}
           password: ${{ secrets.ACR_PASSWORD }}
+
       - name: Build & push image
         run: |
           set -e
@@ -68,6 +95,7 @@ jobs:
           docker tag  "$ACR_LOGIN_SERVER/mediaflow-worker:$TAG" "$ACR_LOGIN_SERVER/mediaflow-worker:worker-ci"
           docker push "$ACR_LOGIN_SERVER/mediaflow-worker:$TAG"
           docker push "$ACR_LOGIN_SERVER/mediaflow-worker:worker-ci"
+
       - name: Next step (manual one-liner)
         run: |
           echo "Update the Container App to the new image with:" >> $GITHUB_STEP_SUMMARY
