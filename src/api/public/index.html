@@ -3,7 +3,7 @@
 
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>MediaFlow Uploader</title>
   <style>
     :root {
@@ -17,7 +17,7 @@
     }
 
     * {
-      box-sizing: border-box;
+      box-sizing: border-box
     }
 
     body {
@@ -34,10 +34,10 @@
     }
 
     .card {
-      background: rgba(17, 24, 39, 0.85);
+      background: rgba(17, 24, 39, .85);
       border: 1px solid #1f2937;
       border-radius: 16px;
-      box-shadow: 0 10px 35px rgba(2, 6, 23, 0.35);
+      box-shadow: 0 10px 35px rgba(2, 6, 23, .35);
       overflow: hidden;
     }
 
@@ -53,7 +53,7 @@
       margin: 0;
       font-size: 18px;
       font-weight: 650;
-      letter-spacing: 0.2px;
+      letter-spacing: .2px;
     }
 
     header .pill {
@@ -147,13 +147,18 @@
       max-height: 340px;
     }
 
+    /* clamp preview to 640px wide; image scales within */
     .thumb {
       margin-top: 12px;
       display: none;
+      max-width: 640px;
+      margin-left: auto;
+      margin-right: auto;
     }
 
     .thumb img {
-      max-width: 100%;
+      width: 100%;
+      height: auto;
       border-radius: 12px;
       border: 1px solid #1e293b;
     }
@@ -211,23 +216,29 @@
           <pre id="out">(nothing yet)</pre>
           <div class="thumb" id="thumbBox">
             <strong>Thumbnail</strong>
-            <div style="margin-top:6px"><img id="thumbImg" alt="thumbnail" /></div>
+            <div style="margin-top:6px">
+              <a id="thumbLink" target="_blank" rel="noopener">
+                <img id="thumbImg" alt="thumbnail" />
+              </a>
+            </div>
+            <div class="muted" id="thumbLinks" style="margin-top:6px;display:none"></div>
           </div>
         </div>
       </div>
+
       <div class="footer">
         <div>
-          <a href="/api/health" target="_blank" rel="noopener">API health</a>
-          ·
-          <a id="uploadsLink" href="#" target="_blank" rel="noopener">uploads/ container</a>
-          ·
+          <a href="/api/health" target="_blank" rel="noopener">API health</a> ·
+          <a id="uploadsLink" href="#" target="_blank" rel="noopener">uploads/ container</a> ·
           <a id="thumbsLink" href="#" target="_blank" rel="noopener">thumbnails/ container</a>
         </div>
         <button id="copyId" class="copy" type="button" title="Copy job id" disabled>Copy job id</button>
       </div>
     </div>
   </div>
-  <script src="/app.js"></script>
+
+  <!-- cache-buster so new JS loads -->
+  <script src="/app.js?v=20250913-5"></script>
 </body>
 
 </html>

@@ -2,3 +2,5 @@ azure-servicebus>=7.8,<8.0
 azure-storage-blob>=12.17,<13.0
 pymongo==3.13.0
 Pillow>=10,<11
+opencv-contrib-python-headless==4.9.0.80
+numpy==1.26.4
