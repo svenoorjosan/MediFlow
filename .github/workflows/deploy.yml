@@ -26,19 +26,37 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Read the publish profile from the secret and extract app + Kudu host
-      - name: Validate API publish profile
-        id: api_pp
+      # Write the publish profile XML from the GitHub secret to a file
+      - name: Write API publish profile
         run: |
           cat > api_profile.xml <<'EOF'
           ${{ secrets.WEBAPP_PUBLISH_PROFILE }}
           EOF
-          APP=$(sed -n 's/.*msdeploySite="\([^"]*\)".*/\1/p' api_profile.xml | head -n1)
-          PUB=$(sed -n 's/.*publishUrl="\([^"]*\)".*/\1/p' api_profile.xml | head -n1)
-          echo "APP_NAME=$APP" >> $GITHUB_ENV
-          echo "KUDU_URL=${PUB%:443}" >> $GITHUB_ENV
-          echo "Using app: $APP"
-          echo "Using Kudu: ${PUB%:443}"
+
+      # Parse the correct publishProfile block (prefer ZipDeploy, fallback to MSDeploy)
+      - name: Parse publish profile for Kudu creds
+        run: |
+          python - <<'PY' > pp.env
+          import xml.etree.ElementTree as ET, sys
+          xml = open('api_profile.xml','r',encoding='utf-8').read()
+          root = ET.fromstring(xml)
+          # prefer ZipDeploy, then MSDeploy
+          picks = [p for p in root.findall('publishProfile') if p.get('publishMethod') in ('ZipDeploy','MSDeploy')]
+          if not picks:
+              print("ERROR=NoZipOrMSDeploy", file=sys.stderr); sys.exit(1)
+          p = picks[0]
+          kudu = (p.get('publishUrl') or '').replace(':443','')
+          user = p.get('userName') or ''
+          pwd  = p.get('userPWD') or ''
+          app  = p.get('msdeploySite') or ''
+          print(f'KUDU_URL={kudu}')
+          print(f'DEPLOY_USER={user}')
+          print(f'DEPLOY_PASS={pwd}')
+          print(f'APP_NAME={app}')
+          PY
+          cat pp.env >> $GITHUB_ENV
+          echo "Using app: $APP_NAME"
+          echo "Using Kudu: $KUDU_URL"
 
       - name: Zip API
         run: |
@@ -48,12 +66,10 @@ jobs:
 
       - name: Deploy API via Kudu ZipDeploy
         run: |
-          USER=$(sed -n 's/.*userName="\([^"]*\)".*/\1/p' api_profile.xml | head -n1)
-          PASS=$(sed -n 's/.*userPWD="\([^"]*\)".*/\1/p' api_profile.xml | head -n1)
-          curl -sSf -u "$USER:$PASS" \
+          curl -sSf -u "$DEPLOY_USER:$DEPLOY_PASS" \
             -X POST "https://${{ env.KUDU_URL }}/api/zipdeploy" \
             --data-binary @src/api.zip
-          echo "Deployed to https://${{ env.APP_NAME }}.azurewebsites.net" >> $GITHUB_STEP_SUMMARY
+          echo "Deployed to https://$APP_NAME.azurewebsites.net" >> $GITHUB_STEP_SUMMARY
 
   deploy-functions:
     name: Function App (blob → Service Bus)
