@@ -1,12 +1,14 @@
 {
   "name": "api",
   "version": "1.0.0",
-  "description": "",
   "type": "module",
   "main": "app.js",
   "scripts": {
     "start": "node app.js",
     "dev": "nodemon app.js"
+  },
+  "engines": {
+    "node": "18.x || 20.x || 22.x"
   },
   "dependencies": {
     "@azure/service-bus": "^7.9.5",

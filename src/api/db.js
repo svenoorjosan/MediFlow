@@ -1,16 +1,22 @@
-import dotenv from 'dotenv';
-dotenv.config();
-
 import { MongoClient } from 'mongodb';
 
-// ── create client WITHOUT serverApi ───────────────────────────
-const client = new MongoClient(process.env.COSMOS_URI, {
-  // useNewUrlParser / useUnifiedTopology are defaults in driver v5
-});
+let _client;
+let _coll;
 
+/** Get the `jobs` collection (singleton connection). */
 export async function jobs() {
-  if (!client.topology) await client.connect();
-  return client
-    .db(process.env.COSMOS_DB)
-    .collection(process.env.COSMOS_COLL);
+  if (_coll) return _coll;
+
+  const uri = process.env.COSMOS_URI;
+  if (!uri) throw new Error('COSMOS_URI not set');
+
+  // Works with Cosmos Mongo API; retryWrites must be false
+  _client = new MongoClient(uri, { retryWrites: false, appName: 'mediaflow-api' });
+  await _client.connect();
+
+  const dbName = process.env.COSMOS_DB || 'mediaflow';
+  const collName = process.env.COSMOS_COLL || 'jobs';
+  _coll = _client.db(dbName).collection(collName);
+
+  return _coll;
 }

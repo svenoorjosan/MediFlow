@@ -23,17 +23,21 @@ module.exports = async function (context, blob) {
   const base = process.env.BLOB_BASE_URL; // e.g. https://<storage>.blob.core.windows.net
   const url = `${base}/uploads/${encodeURIComponent(name)}`;
 
-  // Try to find job id by url (optional: later read jobId from blob metadata)
-  let jobId = null;
+  // Default to blob name (matches how API sets job id)
+  let jobId = name;
+
+  // Try to refine from Cosmos if present
   try {
     const coll = await jobs();
     const job = await coll.findOne({ url });
-    if (job) jobId = job.id || job._id?.toString();
+    if (job && (job.id || job._id)) {
+      jobId = job.id || String(job._id);
+    }
   } catch (e) {
     context.log.warn("Cosmos lookup failed:", e.message);
   }
 
-  const payload = { id: jobId || null, url, blob: { container: "uploads", name } };
+  const payload = { id: jobId, url, blob: { container: "uploads", name } };
 
   try {
     const s = await sender();
@@ -42,7 +46,7 @@ module.exports = async function (context, blob) {
       contentType: "application/json",
       subject: "mediaflow.process.request"
     });
-    context.log(`Enqueued ${name} (id=${jobId || "n/a"})`);
+    context.log(`Enqueued ${name} (id=${jobId})`);
   } catch (e) {
     context.log.error("Service Bus send failed:", e.message);
     throw e; // retry
