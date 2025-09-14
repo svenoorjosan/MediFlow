@@ -1,0 +1,116 @@
+name: Deploy MediaFlow
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'src/api/**'
+      - 'functions/**'
+      - 'src/worker/**'
+      - '.github/workflows/deploy.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: mediaflow-deploy
+  cancel-in-progress: true
+
+env:
+  # ===== EDIT THESE =====
+  RG: rg-mediaflow-dev
+  API_APP: mf-api-1757550168       # your Web App name (edit)
+  FUNC_APP: mf-func-1757550168      # your Function App name (edit)
+  WORKER_APP: mf-worker-ca       # your Container App name
+  ACR_NAME: acrmediaflow1757550168
+
+jobs:
+  deploy-api:
+    name: Web App (API)
+    if: contains(github.event.head_commit.message, '[skip]') == false
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Azure login
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Deploy API via zip
+        run: |
+          az webapp deploy -g "$RG" -n "$API_APP" --src-path src/api --type zip
+
+  deploy-functions:
+    name: Function App (blob → Service Bus)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Azure login
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Zip and deploy functions
+        run: |
+          cd functions
+          zip -r ../functions.zip .
+          cd ..
+          az functionapp deployment source config-zip \
+            -g "$RG" -n "$FUNC_APP" --src functions.zip
+
+  deploy-worker:
+    name: Container App (Python worker)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Azure login
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Ensure containerapp extension (safe if already present)
+        run: |
+          az extension add --name containerapp --yes || az extension update --name containerapp
+          az provider register --namespace Microsoft.App
+
+      - name: Get ACR login server and creds
+        id: acr
+        run: |
+          LOGIN_SERVER=$(az acr show -n "$ACR_NAME" --query loginServer -o tsv)
+          echo "server=$LOGIN_SERVER" >> $GITHUB_OUTPUT
+          USER=$(az acr credential show -n "$ACR_NAME" --query username -o tsv)
+          PASS=$(az acr credential show -n "$ACR_NAME" --query "passwords[0].value" -o tsv)
+          echo "user=$USER" >> $GITHUB_OUTPUT
+          echo "pass=$PASS" >> $GITHUB_OUTPUT
+          echo "tag=worker-${GITHUB_SHA::7}" >> $GITHUB_OUTPUT
+
+      - name: Docker login to ACR
+        run: echo "${{ steps.acr.outputs.pass }}" | docker login "${{ steps.acr.outputs.server }}" -u "${{ steps.acr.outputs.user }}" --password-stdin
+
+      - name: Build and push worker image
+        run: |
+          docker build -f src/worker/Dockerfile -t "${{ steps.acr.outputs.server }}/mediaflow-worker:${{ steps.acr.outputs.tag }}" src/worker
+          docker push "${{ steps.acr.outputs.server }}/mediaflow-worker:${{ steps.acr.outputs.tag }}"
+
+      - name: Allow Container App to pull from ACR (safe to re-run)
+        run: |
+          az containerapp registry set \
+            -g "$RG" -n "$WORKER_APP" \
+            --server "${{ steps.acr.outputs.server }}" \
+            --username "${{ steps.acr.outputs.user }}" \
+            --password "${{ steps.acr.outputs.pass }}"
+
+      - name: Update Container App image
+        run: |
+          az containerapp update \
+            -g "$RG" -n "$WORKER_APP" \
+            --image "${{ steps.acr.outputs.server }}/mediaflow-worker:${{ steps.acr.outputs.tag }}"
+
+      # Optional: enforce worker env caps (leave commented if you want to keep current values)
+      # - name: Pin worker env caps
+      #   run: |
+      #     az containerapp update -g "$RG" -n "$WORKER_APP" \
+      #       --set-env-vars THUMB_MAX=480 THUMB_MAX_2X=0 DISABLE_2X=true THUMB_QUALITY=90 THUMB_SHARPEN=2
+
+
