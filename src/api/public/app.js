@@ -15,8 +15,9 @@
   const thumbLinks = document.getElementById('thumbLinks');
 
   let lastId = null;
+  let passwordRequired = false;
 
-  // Helpful links + base label
+  // Helpful links + base label + whether password is required
   fetch('/api/config').then(r => r.json()).then(cfg => {
     const apiBase = cfg.apiBase || location.origin;
     apiBaseEl.textContent = apiBase.replace(/^https?:\/\//, '');
@@ -26,6 +27,7 @@
     } else {
       uploadsLink.removeAttribute('href'); thumbsLink.removeAttribute('href');
     }
+    passwordRequired = !!cfg.passwordRequired;
   }).catch(() => { });
 
   pickBtn.addEventListener('click', () => fileInput.click());
@@ -108,6 +110,14 @@
 
     const fd = new FormData(); fd.append('file', file);
     const xhr = new XMLHttpRequest(); xhr.open('POST', '/api/upload', true);
+
+    // Send password if present
+    const pwd = (localStorage.getItem('mf_pwd') || '').trim();
+    if (pwd) xhr.setRequestHeader('x-password', pwd);
+    else if (passwordRequired) {
+      // Soft reminder in UI; upload will still attempt
+      statusEl.textContent = 'Uploading… (tip: set password via localStorage.mf_pwd)';
+    }
 
     xhr.upload.onprogress = e => { if (e.lengthComputable) setProgress(Math.round((e.loaded / e.total) * 100)); };
     xhr.onload = () => {

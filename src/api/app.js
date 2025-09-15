@@ -1,3 +1,4 @@
+// src/api/app.js
 import express from 'express';
 import multer from 'multer';
 import dotenv from 'dotenv';
@@ -35,16 +36,16 @@ app.get('/', (_req, res) => {
 const upload = multer({ storage: multer.memoryStorage() });
 
 /* ── Helpers ───────────────────────────────────────────────── */
+function parseStorageConn(conn) {
+  const g = (k) => (new RegExp(`${k}=([^;]+)`).exec(conn) || [])[1];
+  return { accountName: g('AccountName'), accountKey: g('AccountKey') };
+}
+
 function getUploadsContainerClient() {
   const conn = process.env.AZURE_STORAGE_CONNECTION_STRING;
   const name = process.env.AZURE_STORAGE_CONTAINER || 'uploads';
   if (!conn) throw new Error('AZURE_STORAGE_CONNECTION_STRING not set');
   return BlobServiceClient.fromConnectionString(conn).getContainerClient(name);
-}
-
-function parseStorageConn(conn) {
-  const g = (k) => (new RegExp(`${k}=([^;]+)`).exec(conn) || [])[1];
-  return { accountName: g('AccountName'), accountKey: g('AccountKey') };
 }
 
 // READ SAS (default 15 min)
@@ -63,25 +64,84 @@ function makeReadSasUrl(containerName, blobName, minutes = 15) {
   ).toString();
   return `https://${accountName}.blob.core.windows.net/${containerName}/${encodeURIComponent(blobName)}?${sas}`;
 }
-function reqProtoHost(req) { return `${req.headers['x-forwarded-proto'] || 'https'}://${req.headers.host}`; }
+
+function reqProtoHost(req) {
+  return `${req.headers['x-forwarded-proto'] || 'https'}://${req.headers.host}`;
+}
+
+/* ── Password gate (per-route) ─────────────────────────────── */
+function getProvidedPassword(req) {
+  const hdr = (n) => (req.get?.(n) || req.headers?.[n] || '').toString();
+  const bearer = (req.headers?.authorization || '').replace(/^Bearer\s+/i, '');
+  const q = (k) => (req.query?.[k] ?? '').toString();
+  const b = (k) => (req.body?.[k] ?? '').toString(); // works after multer on multipart
+
+  // priority: header → bearer → query → form field
+  return (
+    hdr('x-password') ||
+    hdr('x-api-key') ||
+    bearer ||
+    q('password') || q('pass') || q('token') ||
+    b('password') || b('pass') || b('token') ||
+    ''
+  ).trim();
+}
+
+function requirePasswordMiddleware(req, res, next) {
+  const requirePassword = /^true$/i.test(process.env.REQUIRE_PASSWORD || '');
+  if (!requirePassword) return next();
+
+  const expected = (process.env.UPLOAD_PASSWORD || '').toString();
+  const provided = getProvidedPassword(req);
+
+  console.log('[upload-auth]', {
+    requirePassword,
+    requiredLen: expected.length,
+    providedLen: provided.length
+  });
+
+  if (!expected) {
+    return res.status(503).json({ error: 'upload password not configured on server' });
+  }
+  if (!provided) return res.status(400).json({ error: 'missing password' });
+  if (provided !== expected) return res.status(401).json({ error: 'invalid password' });
+
+  next();
+}
 
 /* ── Routes ────────────────────────────────────────────────── */
 app.get('/api/health', (_req, res) => res.json({ ok: true }));
 
-app.get('/api/config', (_req, res) => {
+app.get('/api/config', (req, res) => {
   const conn = process.env.AZURE_STORAGE_CONNECTION_STRING || '';
   const { accountName } = parseStorageConn(conn);
   const blobBaseUrl = accountName ? `https://${accountName}.blob.core.windows.net` : null;
 
   res.json({
-    apiBase: `${reqProtoHost(_req)}`,
+    apiBase: `${reqProtoHost(req)}`,
     blobBaseUrl,
     uploadsContainer: process.env.AZURE_STORAGE_CONTAINER || 'uploads',
-    thumbsContainer: process.env.THUMBS_CONTAINER || 'thumbnails'
+    thumbsContainer: process.env.THUMBS_CONTAINER || 'thumbnails',
+    // helpful flags for the UI
+    passwordRequired: /^true$/i.test(process.env.REQUIRE_PASSWORD || ''),
+    acceptedHeaders: ['x-password', 'x-api-key', 'authorization Bearer'],
+    acceptedFields: ['password', 'pass', 'token'],
   });
 });
 
-app.post('/api/upload', upload.single('file'), async (req, res) => {
+// Diagnostic: what auth did we see?
+app.get('/api/_diag/auth', (req, res) => {
+  const provided = getProvidedPassword(req);
+  res.json({
+    providedLen: provided.length,
+    hasBearer: /bearer\s+/i.test(req.headers?.authorization || ''),
+    hasXPassword: Boolean(req.get?.('x-password') || req.headers?.['x-password']),
+    hasQuery: Boolean(req.query?.password || req.query?.pass || req.query?.token)
+  });
+});
+
+// Upload (multipart): run multer first, then the password gate so we can see form fields.
+app.post('/api/upload', upload.single('file'), requirePasswordMiddleware, async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: 'no file' });
 
@@ -98,7 +158,7 @@ app.post('/api/upload', upload.single('file'), async (req, res) => {
 
     try { await blockBlob.setMetadata({ jobId: blobName }); } catch { }
 
-    const coll = await jobs();
+    const coll = await jobs(); // Cosmos Mongo API
     await coll.insertOne({
       id: blobName, _id: blobName,
       url: blockBlob.url,
@@ -111,11 +171,15 @@ app.post('/api/upload', upload.single('file'), async (req, res) => {
     res.json({ id: blobName, url: readUrl, original: req.file.originalname });
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: err?.message || 'upload failed' });
+    let msg = err?.message || 'upload failed';
+    if (/Mongo.*Password cannot be empty/i.test(String(err))) {
+      msg = 'Cosmos URI missing/invalid password (set COSMOS_URI with URL-encoded key)';
+    }
+    res.status(500).json({ error: msg });
   }
 });
 
-// Return status + signed 1× and 2× URLs by probing Storage
+// Return status + signed URLs by probing Storage (+ Cosmos best-effort)
 const THUMBS = process.env.THUMBS_CONTAINER || 'thumbnails';
 app.get('/api/job/:id', async (req, res) => {
   try {
@@ -126,7 +190,7 @@ app.get('/api/job/:id', async (req, res) => {
     try {
       const coll = await jobs();
       doc = await coll.findOne({ _id: id });
-    } catch { }
+    } catch { /* Cosmos optional here */ }
 
     // Probe Storage for both sizes
     const conn = process.env.AZURE_STORAGE_CONNECTION_STRING;
@@ -155,8 +219,8 @@ app.get('/api/job/:id', async (req, res) => {
 app.listen(port, () => {
   console.log(`API listening on :${port}`);
   console.log('Env sanity:', {
-    STORAGE_CONTAINER: process.env.AZURE_STORAGE_CONTAINER,
-    COSMOS_DB: process.env.COSMOS_DB,
-    COSMOS_COLL: process.env.COSMOS_COLL,
+    STORAGE_CONTAINER: process.env.AZURE_STORAGE_CONTAINER || 'uploads',
+    COSMOS_DB: process.env.COSMOS_DB || 'mediaflow',
+    COSMOS_COLL: process.env.COSMOS_COLL || 'jobs',
   });
 });
